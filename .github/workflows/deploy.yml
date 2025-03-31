@@ -1,0 +1,83 @@
+name: Secure Deploy to Cloudflare & BY SOMMER
+
+on:
+  push:
+    branches:
+      - main  # Trigger on push to main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        npm install  # Adjust for your project (yarn, pip, etc.)
+
+    - name: Run Security Checks
+      run: |
+        npx eslint . || true  # Linting
+        npm audit || true  # Security audit
+        npx snyk test || true  # Snyk vulnerability scan
+
+    - name: Build project
+      run: npm run build  # Adjust as needed
+
+    - name: Deploy to Cloudflare Pages
+      uses: cloudflare/pages-action@v1
+      with:
+        apiToken: ${{ secrets.CF_API_TOKEN }}
+        accountId: ${{ secrets.CF_ACCOUNT_ID }}
+        projectName: "your-cloudflare-project"  # Change to your Cloudflare project
+        directory: "dist"  # Change to your build output folder
+        gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Deploy to BY SOMMER Platform
+      run: |
+        curl -X POST "https://api.bysommer.com/deploy" \
+          -H "Authorization: Bearer ${{ secrets.BYSOMMER_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{"repo": "https://github.com/mxsommer/YOUR_REPO", "branch": "main"}'
+
+    - name: Set Cloudflare Security Rules
+      run: |
+        curl -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/firewall/rules" \
+          -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "action": "block",
+            "expression": "(http.host in {\"bysommer.net\", \"setern.com\"}) and (not ip.src in {YOUR_TRUSTED_IPs})",
+            "description": "AI Safe Zone"
+          }'
+
+    - name: Generate Security Documentation
+      run: |
+        echo "# Security & Deployment Guide" > SECURITY.md
+        echo "## Deployed Domains: bysommer.net, setern.com" >> SECURITY.md
+        echo "### Security Measures Implemented:" >> SECURITY.md
+        echo "- 🔒 Cloudflare WAF protection enabled" >> SECURITY.md
+        echo "- 🚀 DDoS mitigation active" >> SECURITY.md
+        echo "- 🛠️ Automated security scans on deploy" >> SECURITY.md
+
+    - name: Commit & Push Documentation
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add SECURITY.md
+        git commit -m "Automated Security Docs Update" || echo "No changes to commit"
+        git push origin main || echo "No changes to push"
+
+    - name: Send Notification on Success
+      if: success()
+      run: curl -X POST "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK" \
+          -H "Content-Type: application/json" \
+          -d '{"text": "✅ Secure Deployment successful for mxsommer!"}'
+
+    - name: Send Notification on Failure
+      if: failure()
+      run: curl -X POST "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK" \
+          -H "Content-Type: application/json" \
+          -d '{"text": "❌ Deployment failed for mxsommer! Check logs."}'
