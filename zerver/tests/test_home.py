@@ -10,7 +10,8 @@ from django.conf import settings
 from django.test import override_settings
 from django.utils.timezone import now as timezone_now
 
-from corporate.models import Customer, CustomerPlan
+from corporate.models.customers import Customer
+from corporate.models.plans import CustomerPlan
 from version import ZULIP_VERSION
 from zerver.actions.create_user import do_create_user
 from zerver.actions.realm_settings import do_change_realm_plan_type, do_set_realm_property
@@ -57,6 +58,7 @@ class HomeTest(ZulipTestCase):
         "presence_history_limit_days_for_web_app",
         "promote_sponsoring_zulip",
         "request_language",
+        "show_try_zulip_modal",
         "show_webathena",
         "state_data",
         "test_suite",
@@ -375,6 +377,7 @@ class HomeTest(ZulipTestCase):
             "promote_sponsoring_zulip",
             "realm_rendered_description",
             "request_language",
+            "show_try_zulip_modal",
             "show_webathena",
             "state_data",
             "test_suite",
@@ -385,6 +388,12 @@ class HomeTest(ZulipTestCase):
         ]
         self.assertCountEqual(page_params, expected_keys)
         self.assertIsNone(page_params["state_data"])
+
+        with self.settings(DEVELOPMENT=True):
+            result = self.client_get("/?show_try_zulip_modal")
+        self.assertEqual(result.status_code, 200)
+        page_params = self._get_page_params(result)
+        self.assertEqual(page_params["show_try_zulip_modal"], True)
 
     def test_realm_authentication_methods(self) -> None:
         realm = get_realm("zulip")

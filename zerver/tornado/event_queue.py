@@ -254,10 +254,20 @@ class ClientDescriptor:
                 # cannot filter out deactivated groups by themselves.
                 return not self.include_deactivated_groups
             if event["op"] == "update" and "deactivated" in event["data"]:
-                # 'update' events for group deactivation are only sent to
-                # clients who can filter out deactivated groups by themselves.
-                # Other clients receive 'remove' event.
+                # 'update' events for group deactivation and reactivation
+                # are only sent to clients who can filter out deactivated
+                # groups by themselves. Other clients receive 'remove' and
+                # 'add' event.
                 return self.include_deactivated_groups
+        if (
+            event["type"] == "stream"
+            and event["op"] == "update"
+            and event["property"] == "is_archived"
+        ):
+            # 'update' events for archiving and unarchiving streams are
+            # only sent to clients that can process archived channels.
+            # Other clients receive "create" and "delete" events.
+            return self.archived_channels
         return True
 
     # TODO: Refactor so we don't need this function
@@ -1544,6 +1554,21 @@ def maybe_enqueue_notifications_for_message_update(
     )
 
 
+def process_user_group_creation_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
+    group_creation_event = dict(event)
+    # 'for_reactivation' field is no longer needed and can be popped, as we now
+    # know whether this event was sent for creating the group or reactivating
+    # the group and we can avoid sending the reactivation event to client with
+    # `include_deactivated_groups` client capability set to true.
+    event_for_reactivation = group_creation_event.pop("for_reactivation", False)
+    for user_profile_id in users:
+        for client in get_client_descriptors_for_user(user_profile_id):
+            if client.accepts_event(group_creation_event):
+                if event_for_reactivation and client.include_deactivated_groups:
+                    continue
+                client.add_event(group_creation_event)
+
+
 def process_user_group_name_update_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
     user_group_event = dict(event)
     # 'deactivated' field is no longer needed and can be popped, as we now
@@ -1557,6 +1582,28 @@ def process_user_group_name_update_event(event: Mapping[str, Any], users: Iterab
                 if event_for_deactivated_group and not client.include_deactivated_groups:
                     continue
                 client.add_event(user_group_event)
+
+
+def process_stream_creation_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
+    stream_create_event = dict(event)
+    event_for_unarchiving_stream = stream_create_event.pop("for_unarchiving", False)
+    for user_profile_id in users:
+        for client in get_client_descriptors_for_user(user_profile_id):
+            if client.accepts_event(stream_create_event):
+                if event_for_unarchiving_stream and client.archived_channels:
+                    continue
+                client.add_event(stream_create_event)
+
+
+def process_stream_deletion_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
+    stream_delete_event = dict(event)
+    event_for_archiving_stream = stream_delete_event.pop("for_archiving", False)
+    for user_profile_id in users:
+        for client in get_client_descriptors_for_user(user_profile_id):
+            if client.accepts_event(stream_delete_event):
+                if event_for_archiving_stream and client.archived_channels:
+                    continue
+                client.add_event(stream_delete_event)
 
 
 def process_user_topic_event(event: Mapping[str, Any], users: Iterable[int]) -> None:
@@ -1640,6 +1687,8 @@ def process_notification(notice: Mapping[str, Any]) -> None:
         # event sent for updating name separately for clients with different
         # capabilities.
         process_user_group_name_update_event(event, cast(list[int], users))
+    elif event["type"] == "user_group" and event["op"] == "add":
+        process_user_group_creation_event(event, cast(list[int], users))
     elif event["type"] == "user_topic":
         process_user_topic_event(event, cast(list[int], users))
     elif event["type"] == "typing" and event["message_type"] == "stream":
@@ -1650,6 +1699,10 @@ def process_notification(notice: Mapping[str, Any]) -> None:
         and event["flag"] == "read"
     ):
         process_mark_message_unread_event(event, cast(list[int], users))
+    elif event["type"] == "stream" and event["op"] == "create":
+        process_stream_creation_event(event, cast(list[int], users))
+    elif event["type"] == "stream" and event["op"] == "delete":
+        process_stream_deletion_event(event, cast(list[int], users))
     elif event["type"] == "cleanup_queue":
         # cleanup_event_queue may generate this event to forward cleanup
         # requests to the right shard.

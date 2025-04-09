@@ -110,6 +110,11 @@ class BinaryDict<T> {
         this.trues.delete(k);
         this.falses.set(k, v);
     }
+
+    delete(k: number): void {
+        this.trues.delete(k);
+        this.falses.delete(k);
+    }
 }
 
 // The stream_info variable maps stream ids to stream properties objects
@@ -303,13 +308,23 @@ export function slug_to_stream_id(slug: string): number | undefined {
     return undefined;
 }
 
-export function delete_sub(stream_id: number): void {
+export function mark_archived(stream_id: number): void {
     const sub = get_sub_by_id(stream_id);
     if (sub === undefined || !stream_info.get(stream_id)) {
         blueslip.warn("Failed to archive stream " + stream_id.toString());
         return;
     }
     sub.is_archived = true;
+}
+
+export function delete_sub(stream_id: number): void {
+    if (!stream_info.get(stream_id)) {
+        blueslip.warn("Failed to archive stream " + stream_id.toString());
+        return;
+    }
+
+    sub_store.delete_sub(stream_id);
+    stream_info.delete(stream_id);
 }
 
 export function get_non_default_stream_names(): {name: string; unique_id: number}[] {
@@ -855,10 +870,6 @@ export let is_user_subscribed = (stream_id: number, user_id: number): boolean =>
         );
         return false;
     }
-    if (user_id === undefined) {
-        blueslip.warn("Undefined user_id passed to function is_user_subscribed");
-        return false;
-    }
 
     return peer_data.is_user_subscribed(stream_id, user_id);
 };
@@ -929,7 +940,11 @@ export function create_sub_from_server_data(
         ...attrs,
     };
 
-    peer_data.set_subscribers(sub.stream_id, subscriber_user_ids ?? []);
+    if (attrs.partial_subscribers !== undefined) {
+        peer_data.set_subscribers(sub.stream_id, attrs.partial_subscribers, false);
+    } else {
+        peer_data.set_subscribers(sub.stream_id, subscriber_user_ids ?? []);
+    }
 
     clean_up_description(sub);
 
